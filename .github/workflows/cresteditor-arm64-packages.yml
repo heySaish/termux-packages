@@ -1,0 +1,110 @@
+name: CrestEditor ARM64 Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      custom_package:
+        description: 'Single package name (leave empty to build all matrix packages)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Ek fail hua toh dusre rukaney nahi chahiye
+      matrix:
+        package:
+          - bash
+          - busybox
+          - coreutils
+          - ca-certificates
+          - curl
+          - git
+          - python
+          - nodejs
+          - nano
+          - openssl
+          - zlib
+          - libandroid-support
+          - libffi
+          - ncurses
+          - readline
+          - tar
+          - gzip
+          - dpkg
+          - apt
+
+    steps:
+      - name: Check if custom package filter matches
+        id: filter
+        run: |
+          CUSTOM="${{ github.event.inputs.custom_package }}"
+          PKG="${{ matrix.package }}"
+          if [ -n "$CUSTOM" ] && [ "$CUSTOM" != "$PKG" ]; then
+            echo "Skipping $PKG because custom package was requested: $CUSTOM"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout Repository
+        if: steps.filter.outputs.skip != 'true'
+        uses: actions/checkout@v4
+
+      - name: Check if already built & uploaded
+        if: steps.filter.outputs.skip != 'true'
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="cresteditor-arm64"
+          PKG="${{ matrix.package }}"
+
+          # Create release if it doesn't exist
+          gh release view "$TAG_NAME" || gh release create "$TAG_NAME" \
+            --title "CrestEditor ARM64 Packages" \
+            --notes "Prebuilt aarch64 packages for com.cresteditor" || true
+
+          # Check if deb already exists in release
+          if gh release view "$TAG_NAME" --json assets --jq '.assets.[].name' | grep -q "^${PKG}_.*_aarch64\.deb$"; then
+            echo "::notice ::Package $PKG already exists in release! Skipping build."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Free Disk Space on Runner
+        if: steps.filter.outputs.skip != 'true' && steps.check_release.outputs.skip != 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+
+      - name: Build Package for aarch64
+        if: steps.filter.outputs.skip != 'true' && steps.check_release.outputs.skip != 'true'
+        run: |
+          ./scripts/run-docker.sh ./build-package.sh -s -a aarch64 "${{ matrix.package }}"
+
+      - name: Instant Auto-Upload to GitHub Release
+        if: steps.filter.outputs.skip != 'true' && steps.check_release.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="cresteditor-arm64"
+          mkdir -p output
+          
+          # Find generated debs
+          DEBS=$(find output -name "${{ matrix.package }}_*_aarch64.deb" 2>/dev/null || true)
+          if [ -z "$DEBS" ]; then
+            DEBS=$(find output -name "*_aarch64.deb" 2>/dev/null || true)
+          fi
+
+          if [ -n "$DEBS" ]; then
+            echo "Uploading generated debs for ${{ matrix.package }}..."
+            gh release upload "$TAG_NAME" $DEBS --clobber
+          else
+            echo "No .deb generated to upload."
+            exit 1
+          fi
