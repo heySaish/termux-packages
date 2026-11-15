@@ -18,6 +18,9 @@ jobs:
       fail-fast: false  # Ek fail hua toh dusre rukaney nahi chahiye
       matrix:
         package:
+          - libandroid-support
+          - ncurses
+          - readline
           - bash
           - busybox
           - coreutils
@@ -29,10 +32,7 @@ jobs:
           - nano
           - openssl
           - zlib
-          - libandroid-support
           - libffi
-          - ncurses
-          - readline
           - tar
           - gzip
           - dpkg
@@ -82,10 +82,18 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
 
+      - name: Download existing packages cache
+        if: steps.filter.outputs.skip != 'true' && steps.check_release.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p output
+          gh release download "cresteditor-arm64" -D output --pattern "*_aarch64.deb" || true
+
       - name: Build Package for aarch64
         if: steps.filter.outputs.skip != 'true' && steps.check_release.outputs.skip != 'true'
         run: |
-          ./scripts/run-docker.sh ./build-package.sh -s -a aarch64 "${{ matrix.package }}"
+          ./scripts/run-docker.sh ./build-package.sh --reuse-built-packages -a aarch64 "${{ matrix.package }}"
 
       - name: Instant Auto-Upload to GitHub Release
         if: steps.filter.outputs.skip != 'true' && steps.check_release.outputs.skip != 'true'
@@ -93,17 +101,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="cresteditor-arm64"
-          mkdir -p output
-          
-          # Find generated debs
-          DEBS=$(find output -name "${{ matrix.package }}_*_aarch64.deb" 2>/dev/null || true)
-          if [ -z "$DEBS" ]; then
-            DEBS=$(find output -name "*_aarch64.deb" 2>/dev/null || true)
-          fi
-
-          if [ -n "$DEBS" ]; then
-            echo "Uploading generated debs for ${{ matrix.package }}..."
-            gh release upload "$TAG_NAME" $DEBS --clobber
+          if ls output/*.deb 1> /dev/null 2>&1; then
+            echo "Uploading all built debs to GitHub Release..."
+            gh release upload "$TAG_NAME" output/*.deb --clobber
           else
             echo "No .deb generated to upload."
             exit 1
