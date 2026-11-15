@@ -1,0 +1,55 @@
+name: Build CrestEditor Bootstrap Archive
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip tar xz-utils zstd binutils
+
+      - name: Download prebuilt packages from Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="cresteditor-arm64"
+          mkdir -p output
+          echo "[*] Fetching all prebuilt packages from release $TAG_NAME..."
+          gh release download "$TAG_NAME" -D output/ --pattern "*_aarch64.deb" || true
+          gh release download "$TAG_NAME" -D output/ --pattern "*_all.deb" || true
+
+          COUNT=$(ls -1 output/*.deb 2>/dev/null | wc -l)
+          echo "[*] Found $COUNT .deb packages ready for bootstrap packaging."
+          if [ "$COUNT" -eq 0 ]; then
+            echo "[!] No .deb packages found in release! Run package builds first."
+            exit 1
+          fi
+
+      - name: Generate bootstrap-aarch64.zip
+        run: |
+          ./scripts/generate-cresteditor-bootstrap.sh output/ .
+
+      - name: Upload bootstrap zip to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="cresteditor-arm64"
+          echo "[*] Uploading bootstrap-aarch64.zip to GitHub Release $TAG_NAME..."
+          gh release upload "$TAG_NAME" bootstrap-aarch64.zip --clobber
+
+      - name: Upload artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-aarch64
+          path: bootstrap-aarch64.zip
+          retention-days: 30
